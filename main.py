@@ -1,7 +1,6 @@
 import time
 
 import cv2
-import numpy as np
 
 # Load the pre-trained face and eye cascade classifiers from OpenCV's data directory
 face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_frontalface_default.xml")
