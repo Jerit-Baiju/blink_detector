@@ -12,7 +12,7 @@ if face_cascade.empty() or eye_cascade.empty():
     exit()
 
 # Start video capture (0 is usually your default webcam)
-cap = cv2.VideoCapture(1)
+cap = cv2.VideoCapture(0)
 
 if not cap.isOpened():
     print("Error: Could not open webcam.")
