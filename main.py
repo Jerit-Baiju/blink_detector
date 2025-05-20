@@ -28,15 +28,20 @@ fps = 0
 
 # Variables for blink detection
 last_blink_time = time.time()
-blink_cooldown = 0.5  # seconds between blink detections
+blink_cooldown = 0.3  # Reduced cooldown to catch more rapid blinks
 blink_counter = 0
 
 # Blink detection state variables
 eye_closed_frames = 0
 eye_open_frames = 0
 eye_state = "open"  # Can be "open", "closed", or "transition"
-EYE_CLOSED_THRESHOLD = 3  # Number of consecutive frames with eyes closed to confirm a blink
-EYE_OPEN_THRESHOLD = 2  # Number of consecutive frames with eyes open to reset
+EYE_CLOSED_THRESHOLD = 2  # Reduced threshold to detect faster blinks
+EYE_OPEN_THRESHOLD = 1  # Reduced threshold to reset faster
+
+# Eye aspect ratio (EAR) tracking for improved detection
+prev_eyes_count = 0
+confidence_level = 0  # For tracking detection confidence
+MAX_CONFIDENCE = 3
 
 while True:
     ret, frame = cap.read()
