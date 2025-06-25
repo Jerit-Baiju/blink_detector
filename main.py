@@ -6,10 +6,8 @@ import threading
 import time
 
 import cv2
-import numpy as np
 
 # Configuration
-DEMO_MODE = len(sys.argv) > 1 and sys.argv[1] == '--demo'
 
 # Load the pre-trained face and eye cascade classifiers from OpenCV's data directory
 face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_frontalface_default.xml")
@@ -48,27 +46,20 @@ current_action_index = 0
 selected_category = None
 blink_start_time = None
 is_long_blink = False
-LONG_BLINK_THRESHOLD = 1.0  # 1 second to select
+LONG_BLINK_THRESHOLD = 0.8  # 0.8 seconds to select (more responsive)
 selection_feedback_time = 0
 FEEDBACK_DURATION = 2.0  # Show selection feedback for 2 seconds
 
 # Start video capture (0 is usually your default webcam)
-if not DEMO_MODE:
-    cap = cv2.VideoCapture(0)
-    
-    if not cap.isOpened():
-        print("Error: Could not open webcam.")
-        print("Run with '--demo' flag to test navigation without camera:")
-        print("python main.py --demo")
-        exit()
-    
-    # Performance optimization: set lower resolution
-    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
-else:
-    print("DEMO MODE: Testing navigation without camera")
-    print("Use keys: 's' for short blink (navigate), 'l' for long blink (select)")
-    cap = None
+cap = cv2.VideoCapture(0)
+
+if not cap.isOpened():
+    print("Error: Could not open webcam.")
+    exit()
+
+# Performance optimization: set lower resolution
+cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
 
 # Print startup instructions
 print("=" * 60)
@@ -76,8 +67,9 @@ print("EYE BLINK COMMUNICATION SYSTEM")
 print("=" * 60)
 print("HOW TO USE:")
 print("• SHORT BLINK: Navigate through options")
-print("• LONG BLINK (1 second): Select current option")
-print("• The system will beep when you make a selection")
+print("• LONG BLINK (hold for 0.8 seconds): Select current option")
+print("• The system will beep IMMEDIATELY when selection is made")
+print("• You can open your eyes after hearing the beep")
 print("• Press 'q' to quit, 'b' to go back, 'r' to reset")
 print("=" * 60)
 print("Starting camera...")
@@ -97,7 +89,7 @@ eye_closed_frames = 0
 eye_open_frames = 0
 eye_state = "open"  # Can be "open", "closed", or "transition"
 EYE_CLOSED_THRESHOLD = 3  # Frames to confirm eyes are closed
-EYE_OPEN_THRESHOLD = 2  # Frames to confirm eyes are open
+EYE_OPEN_THRESHOLD = 3  # Frames to confirm eyes are open
 
 # Eye aspect ratio (EAR) tracking for improved detection
 prev_eyes_count = 0
@@ -108,19 +100,19 @@ def handle_navigation():
     """Handle short blink - navigate through options"""
     global current_category_index, current_action_index, navigation_mode, last_blink_time
     
-    current_time = time.time()
-    if current_time - last_blink_time < blink_cooldown:
+    nav_time = time.time()
+    if nav_time - last_blink_time < blink_cooldown:
         return
     
-    last_blink_time = current_time
+    last_blink_time = nav_time
     
     if navigation_mode == "categories":
         current_category_index = (current_category_index + 1) % len(categories)
-        print(f"Navigating to category: {categories[current_category_index]['name']}")
+        print(f"→ Navigating to category: {categories[current_category_index]['name']}")
     elif navigation_mode == "actions":
         actions = selected_category['actions']
         current_action_index = (current_action_index + 1) % len(actions)
-        print(f"Navigating to action: {actions[current_action_index]['description']}")
+        print(f"→ Navigating to action: {actions[current_action_index]['description']}")
 
 def handle_selection():
     """Handle long blink - make a selection"""
@@ -130,20 +122,21 @@ def handle_selection():
     current_time = time.time()
     selection_feedback_time = current_time
     
+    # Play beep immediately to signal selection
+    threading.Thread(target=play_beep, daemon=True).start()
+    
     if navigation_mode == "categories":
         selected_category = categories[current_category_index]
         navigation_mode = "actions"
         current_action_index = 0
-        print(f"Selected category: {selected_category['name']}")
-        # Play beep in background thread to avoid blocking
-        threading.Thread(target=play_beep, daemon=True).start()
+        print(f"✓ SELECTED CATEGORY: {selected_category['name']}")
+        print("Now selecting action - blink to navigate, long blink to select")
     elif navigation_mode == "actions":
         selected_action = selected_category['actions'][current_action_index]
-        print(f"SELECTED ACTION: {selected_action['description']}")
-        print(f"Category: {selected_category['name']}")
-        print("-" * 50)
-        # Play beep for final selection
-        threading.Thread(target=play_beep, daemon=True).start()
+        print("=" * 60)
+        print(f"✓ FINAL SELECTION: {selected_action['description']}")
+        print(f"  Category: {selected_category['name']}")
+        print("=" * 60)
         # Reset to categories for next communication
         navigation_mode = "categories"
         selected_category = None
@@ -189,12 +182,25 @@ def draw_navigation_ui(frame):
     
     # Show blink progress for long blinks
     if blink_start_time is not None:
-        progress = min(1.0, (time.time() - blink_start_time) / LONG_BLINK_THRESHOLD)
-        progress_width = int(300 * progress)
+        blink_progress = min(1.0, (time.time() - blink_start_time) / LONG_BLINK_THRESHOLD)
+        progress_width = int(300 * blink_progress)
+        # Background bar
         cv2.rectangle(frame, (15, 460), (315, 480), (50, 50, 50), -1)
-        cv2.rectangle(frame, (15, 460), (15 + progress_width, 480), (0, 255, 0), -1)
-        cv2.putText(frame, "Hold blink to select", (320, 475), 
-                   cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+        # Progress bar
+        if blink_progress >= 1.0:
+            # Progress reached 100% - show full green bar
+            cv2.rectangle(frame, (15, 460), (315, 480), (0, 255, 0), -1)
+            if is_long_blink:
+                cv2.putText(frame, "SELECTED! ✓", (320, 475), 
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+            else:
+                cv2.putText(frame, "SELECTING... 100%", (320, 475), 
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+        else:
+            # Progress - yellow/orange bar
+            cv2.rectangle(frame, (15, 460), (15 + progress_width, 480), (0, 165, 255), -1)
+            cv2.putText(frame, f"Hold blink... {blink_progress:.0%}", (320, 475), 
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
     
     # Show recent selection feedback
     if time.time() - selection_feedback_time < FEEDBACK_DURATION:
@@ -204,23 +210,14 @@ def draw_navigation_ui(frame):
 # Additional UI improvements for better visibility
 def draw_instructions(frame):
     """Draw basic instructions on the frame"""
-    if DEMO_MODE:
-        cv2.putText(frame, "DEMO MODE - Use 's' for navigate, 'l' for select", 
-                   (10, frame.shape[0] - 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 0), 1)
-    else:
-        cv2.putText(frame, "Short blink: Navigate | Long blink (1s): Select", 
-                   (10, frame.shape[0] - 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+    cv2.putText(frame, "Short blink: Navigate | Long blink (0.8s): Select", 
+               (10, frame.shape[0] - 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
 
 while True:
-    if not DEMO_MODE:
-        ret, frame = cap.read()
-        if not ret:
-            print("Error: Could not read frame.")
-            break
-    else:
-        # Create a black frame for demo mode
-        frame = np.zeros((480, 640, 3), dtype=np.uint8)
-        ret = True
+    ret, frame = cap.read()
+    if not ret:
+        print("Error: Could not read frame.")
+        break
 
     # Calculate FPS
     current_time = time.time()
@@ -261,50 +258,81 @@ while True:
     # State machine for blink detection with navigation
     if len(faces) > 0:  # Only process if a face is detected
         if eyes_count >= 1:  # Eyes are open
-            # If we were tracking a potential long blink, reset it
-            if blink_start_time is not None:
-                blink_duration = current_time - blink_start_time
-                if blink_duration >= LONG_BLINK_THRESHOLD and not is_long_blink:
-                    # Long blink detected - make selection
-                    handle_selection()
-                    is_long_blink = True
-                elif blink_duration < LONG_BLINK_THRESHOLD and eye_state == "closed":
-                    # Short blink detected - navigate
-                    handle_navigation()
-                blink_start_time = None
-                is_long_blink = False
-            
             eye_open_frames += 1
             eye_closed_frames = 0
+            
+            # Check if eyes just opened (transition from closed to open)
             if eye_state == "closed" and eye_open_frames >= EYE_OPEN_THRESHOLD:
+                # Eyes have opened - check if we had a blink and it wasn't already processed
+                if blink_start_time is not None and not is_long_blink:
+                    blink_duration = current_time - blink_start_time
+                    if blink_duration >= LONG_BLINK_THRESHOLD:
+                        # Long blink detected - make selection
+                        print(f"Long blink completed! Duration: {blink_duration:.2f}s")
+                        handle_selection()
+                        is_long_blink = True
+                    elif blink_duration < LONG_BLINK_THRESHOLD:
+                        # Short blink detected - navigate
+                        print(f"Short blink detected! Duration: {blink_duration:.2f}s")
+                        handle_navigation()
+                
+                # Reset blink tracking after processing
+                if not is_long_blink or eye_open_frames >= EYE_OPEN_THRESHOLD + 2:
+                    blink_start_time = None
+                    is_long_blink = False
+                
                 eye_state = "open"
-        else:  # Eyes are closed
+                
+        else:  # Eyes are closed (no eyes detected)
             eye_closed_frames += 1
             eye_open_frames = 0
             
+            # Check if eyes just closed (transition from open to closed)
             if eye_state == "open" and eye_closed_frames >= EYE_CLOSED_THRESHOLD:
                 # Start tracking blink duration
-                if blink_start_time is None:
-                    blink_start_time = current_time
+                blink_start_time = current_time
                 eye_state = "closed"
+                is_long_blink = False
+                print("Eyes closed - tracking blink duration...")
+            
+            # Check for long blink while eyes are still closed
+            elif eye_state == "closed" and blink_start_time is not None and not is_long_blink:
+                blink_duration = current_time - blink_start_time
+                if blink_duration >= LONG_BLINK_THRESHOLD:
+                    # Long blink threshold reached - make selection immediately
+                    print(f"Long blink threshold reached! Duration: {blink_duration:.2f}s")
+                    handle_selection()
+                    is_long_blink = True
+                    # Keep blink_start_time for a moment to show 100% progress
+                    # It will be reset when eyes open
+                    
     else:
         # No face detected - reset counters
         eye_open_frames = 0
         eye_closed_frames = 0
+        if blink_start_time is not None:
+            print("Face lost - resetting blink tracking")
         blink_start_time = None
         is_long_blink = False
+        eye_state = "open"
 
     # Draw navigation interface
     draw_navigation_ui(frame)
     draw_instructions(frame)
     
     # Display eye state and system info
-    eye_status = "Eyes: " + ("Open" if eyes_detected else "Closed" if len(faces) > 0 else "No Face")
-    cv2.putText(frame, eye_status, (10, 110), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+    eye_status = f"Eyes: {('Open' if eyes_detected else 'Closed') if len(faces) > 0 else 'No Face'} | State: {eye_state}"
+    cv2.putText(frame, eye_status, (10, 110), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
 
     # Display detection stats
-    cv2.putText(frame, f"FPS: {fps:.1f}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+    cv2.putText(frame, f"FPS: {fps:.1f} | Eyes detected: {eyes_count}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
     cv2.putText(frame, f"Navigation: {navigation_mode.title()}", (10, 70), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 2)
+    
+    # Debug blink tracking
+    if blink_start_time is not None:
+        blink_duration = current_time - blink_start_time
+        blink_progress = min(1.0, blink_duration / LONG_BLINK_THRESHOLD)
+        cv2.putText(frame, f"Blink: {blink_duration:.2f}s ({blink_progress:.0%})", (10, 130), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 165, 0), 2)
 
     # Show the video feed with instructions
     cv2.imshow("Eye Blink Communication System", frame)
@@ -325,17 +353,11 @@ while True:
         current_category_index = 0
         current_action_index = 0
         print("Reset to beginning")
-    elif DEMO_MODE:
-        if key == ord("s"):  # Short blink simulation
-            handle_navigation()
-        elif key == ord("l"):  # Long blink simulation
-            handle_selection()
 
 def safe_cleanup():
     """Safely clean up resources"""
     try:
-        if cap is not None:
-            cap.release()
+        cap.release()
         cv2.destroyAllWindows()
         print("\nSystem shutdown complete.")
     except Exception as e:
